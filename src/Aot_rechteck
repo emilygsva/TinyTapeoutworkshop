@@ -1,0 +1,77 @@
+`default_nettype none
+
+module tt_um_vga_example(
+    input wire [7:0] ui_in,  // Dedizierte Eingänge
+    output wire [7:0] uo_out, // Dedizierte Ausgänge
+    input wire [7:0] uio_in, // IOs: Eingangs-Pfad
+    output wire [7:0] uio_out, // IOs: Ausgangs-Pfad
+    output wire [7:0] uio_oe, // IOs: Enable-Pfad (aktiv High: 0=Eingang, 1=Ausgang)
+    input wire ena, // immer 1, solange das Design mit Strom versorgt ist - kann ignoriert werden
+    input wire clk, // Takt
+    input wire rst_n // reset_n - Low = Reset
+);
+
+    // VGA-Signale
+    wire hsync;
+    wire vsync;
+    wire [1:0] R;
+    wire [1:0] G;
+    wire [1:0] B;
+    wire video_active;
+    wire [9:0] pix_x;
+    wire [9:0] pix_y;
+
+    // Position des Autos
+    reg [9:0] car_pos_x;
+    reg [23:0] slow_counter; // Ein Zähler für die Verlangsamung
+
+    // TinyVGA PMOD
+    assign uo_out = {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
+
+    // Ungenutzte Ausgänge auf 0 gesetzt
+    assign uio_out = 0;
+    assign uio_oe  = 0;
+
+    // Suppress unused signals warning
+    wire _unused_ok = &{ena, ui_in, uio_in};
+
+    // H/V-Sync Generator Instanz
+    hvsync_generator hvsync_gen(
+        .clk(clk),
+        .reset(~rst_n),
+        .hsync(hsync),
+        .vsync(vsync),
+        .display_on(video_active),
+        .hpos(pix_x),
+        .vpos(pix_y)
+    );
+
+    /* Farblogik:
+       - Auto: Rotes Rechteck
+       - Straße: Grauer Bereich
+    */
+    
+    wire street_area = pix_y >= 240 && pix_y < 280;
+    wire road_stripe = (pix_x[5:4] == 2'b01) && street_area;
+    
+    assign R = (video_active && pix_x >= car_pos_x && pix_x < car_pos_x + 50 && pix_y >= 200 && pix_y < 240) ? 2'b11 : 
+               video_active && road_stripe ? 2'b10 : 2'b00;
+    assign G = (video_active && road_stripe) ? 2'b10 : 2'b00;
+    assign B = (video_active && road_stripe) ? 2'b10 : 2'b00;
+
+    // Bewegung des Autos
+    always @(posedge clk or negedge rst_n) begin
+        if (~rst_n) begin
+            car_pos_x <= 0;
+            slow_counter <= 0;
+        end else if (ui_in[0]) begin
+            slow_counter <= slow_counter + 1;
+            if (slow_counter == 24'hFFFFFF) begin // Verlangsame die Bewegung
+                slow_counter <= 0; 
+                if (car_pos_x < 640 - 50) begin
+                    car_pos_x <= car_pos_x + 1;
+                end
+            end
+        end
+    end
+endmodule
